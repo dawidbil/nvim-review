@@ -4,10 +4,28 @@ local ctx = require("review.context")
 local diff = require("review.diff")
 local M = {}
 
----Deterministic socket path for a root dir.
+---A directory only we can use: $XDG_RUNTIME_DIR when it is ours and 0700, else
+---/tmp/nvim-review-<uid> (created 0700). Anything else (other owner, group/world access,
+---symlink) is refused, because Neovim's RPC lets whoever can connect run Lua in the editor.
+function M.runtime_dir()
+  local uid = vim.uv.os_get_passwd().uid
+  local function private(d)
+    local st = vim.uv.fs_lstat(d)
+    return st and st.type == "directory" and st.uid == uid and bit.band(st.mode, 63) == 0
+  end
+  local xdg = vim.env.XDG_RUNTIME_DIR
+  -- unix socket paths are limited to ~108 bytes
+  if xdg and xdg ~= "" and #xdg < 70 and private(xdg) then return xdg end
+  local dir = ("/tmp/nvim-review-%d"):format(uid)
+  if not vim.uv.fs_lstat(dir) then vim.uv.fs_mkdir(dir, tonumber("700", 8)) end
+  if private(dir) then return dir end
+  return nil, "refusing unsafe socket directory " .. dir .. " (must be a real directory owned by you, mode 0700)"
+end
+
+---Deterministic socket path for a root dir (nil, err when no safe directory exists).
 function M.socket_path(root)
-  local dir = vim.env.XDG_RUNTIME_DIR
-  if not dir or dir == "" or vim.fn.isdirectory(dir) == 0 then dir = "/tmp" end
+  local dir, err = M.runtime_dir()
+  if not dir then return nil, err end
   return ("%s/nvim-review-%s.sock"):format(dir, vim.fn.sha256(root):sub(1, 10))
 end
 
@@ -64,9 +82,7 @@ function M.handle(cmd, args)
       if args.line then pcall(vim.api.nvim_win_set_cursor, 0, { args.line, 0 }) end
     end
   elseif cmd == "diff" then
-    if args.first then
-      diff.open_first(wt)
-    else
+    if not (args.first and diff.open_first(wt)) then
       diff.pick(wt)
     end
   end
@@ -75,15 +91,21 @@ function M.handle(cmd, args)
 end
 
 function M.setup()
-  -- RPC socket per root (first instance for a root owns it)
-  local sock = M.socket_path(ctx.root)
-  if #sock > 100 then
-    vim.notify("nvim-review: socket path too long for a unix socket (" .. #sock .. " chars); `nvim-review open|diff` will not work. Shorten $XDG_RUNTIME_DIR.", vim.log.levels.WARN)
-  elseif not alive(sock) then
-    pcall(os.remove, sock)
-    local ok, res = pcall(vim.fn.serverstart, sock)
-    if not ok or res == "" then
-      vim.notify("nvim-review: could not start RPC socket " .. sock .. ": " .. tostring(res), vim.log.levels.WARN)
+  -- RPC socket per root. Bind first; only when that fails do we look at what is in the way:
+  -- a live socket belongs to another instance (leave it alone), a dead one is stale (replace).
+  local sock, err = M.socket_path(ctx.root)
+  if not sock then
+    vim.notify("nvim-review: " .. err .. "; `nvim-review open|diff` disabled", vim.log.levels.WARN)
+  else
+    local function start()
+      local ok, res = pcall(vim.fn.serverstart, sock)
+      return ok and res ~= ""
+    end
+    if not start() and not alive(sock) then
+      pcall(os.remove, sock)
+      if not start() then
+        vim.notify("nvim-review: could not start RPC socket " .. sock, vim.log.levels.WARN)
+      end
     end
   end
   M.socket = sock
@@ -103,6 +125,13 @@ function M.setup()
       return folders
     end
   end
+  local function refresh_lock()
+    local okc, cc = pcall(require, "claudecode")
+    if okc and ok_lock and cc.state and cc.state.port and cc.state.auth_token then
+      pcall(lockfile.create, cc.state.port, cc.state.auth_token) -- same port + token, new folder list
+    end
+  end
+  vim.api.nvim_create_autocmd("User", { pattern = "ReviewWorktreesChanged", callback = refresh_lock })
   local ok = pcall(require("claudecode").setup, {
     auto_start = true,
     terminal = { provider = "none" },

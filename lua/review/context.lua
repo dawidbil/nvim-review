@@ -10,7 +10,7 @@ M.worktrees = {} ---@type review.Worktree[]
 M.active = nil ---@type review.Worktree?
 M.base_mode = "head" ---@type "head"|"merge-base"
 M.view_mode = "split" ---@type "split"|"inline" (persisted)
-M.meta = { dirty = 0, base_label = "HEAD" }
+M.meta = { dirty = 0, base_label = "HEAD", base_ref = "HEAD" }
 
 ---@class review.Worktree
 ---@field repo string repo display name
@@ -23,12 +23,30 @@ M.meta = { dirty = 0, base_label = "HEAD" }
 
 local function realpath(p) return uv.fs_realpath(p) or p end
 
----Run git in `path`. Returns stdout (or nil on failure), stderr, exit code.
+-- Security: repos under the root may be untrusted (agent output, downloads). Keep their own
+-- config from executing code when we (or gitsigns) run git: core.fsmonitor / hooksPath are
+-- overridden via GIT_CONFIG_* (highest precedence, inherited by every git subprocess).
+-- Also never take optional index locks, so we do not collide with agents running git.
+-- Residual: clean/smudge filters and textconv drivers named in a repo's config. We pass
+-- --no-textconv/--no-ext-diff to our own diffs, but a `filter.*` driver could still run.
+do
+  local n = tonumber(vim.env.GIT_CONFIG_COUNT) or 0
+  for _, kv in ipairs({ { "core.fsmonitor", "false" }, { "core.hooksPath", "/dev/null" } }) do
+    vim.env["GIT_CONFIG_KEY_" .. n] = kv[1]
+    vim.env["GIT_CONFIG_VALUE_" .. n] = kv[2]
+    n = n + 1
+  end
+  vim.env.GIT_CONFIG_COUNT = tostring(n)
+  vim.env.GIT_OPTIONAL_LOCKS = "0"
+  vim.env.GIT_TERMINAL_PROMPT = "0"
+end
+
 ---Status notification that replaces itself instead of stacking.
 function M.notify(msg)
   vim.notify(msg, vim.log.levels.INFO, { title = "review", id = "review-status" })
 end
 
+---Run git in `path`. Returns stdout (or nil on failure), stderr, exit code.
 function M.git(path, args, allow_fail)
   local cmd = vim.list_extend({ "git", "-C", path }, args)
   local r = vim.system(cmd, { text = true }):wait()
@@ -96,14 +114,15 @@ function M.find_root(start)
   return top and realpath(vim.trim(top)) or start
 end
 
-local function list_worktrees(repo_path)
-  local out = M.git(repo_path, { "worktree", "list", "--porcelain" })
+---List all worktrees of the repo that `any_path` (a repo or any of its worktrees) belongs to.
+---The repo path is git's first entry, so bare repos and linked worktrees resolve correctly.
+local function list_worktrees(any_path)
+  local out = M.git(any_path, { "worktree", "list", "--porcelain" })
   if not out then return {} end
-  local repo = vim.fs.basename(repo_path)
   local wts, cur = {}, nil
   for line in (out .. "\n"):gmatch("(.-)\n") do
     if line:sub(1, 9) == "worktree " then
-      cur = { path = realpath(line:sub(10)), repo = repo, repo_path = repo_path, main = #wts == 0 }
+      cur = { path = realpath(line:sub(10)), main = #wts == 0 }
       wts[#wts + 1] = cur
     elseif cur then
       if line:sub(1, 5) == "HEAD " then
@@ -115,9 +134,13 @@ local function list_worktrees(repo_path)
       end
     end
   end
+  if #wts == 0 then return {} end
+  local repo_path = wts[1].path
+  local repo = vim.fs.basename(repo_path):gsub("%.git$", "")
   local res = {}
   for _, wt in ipairs(wts) do
     if not wt.bare and uv.fs_stat(wt.path) then
+      wt.repo, wt.repo_path = repo, repo_path
       wt.name = wt.main and "(main)" or vim.fs.basename(wt.path)
       wt.branch = wt.branch or (wt.head and ("detached@" .. wt.head)) or "?"
       res[#res + 1] = wt
@@ -151,7 +174,18 @@ end
 
 -- ── queries ──────────────────────────────────────────────────────────────────
 
+local function signature()
+  local paths = vim.tbl_map(function(w) return w.path end, M.worktrees)
+  table.sort(paths)
+  return table.concat(paths, "\n")
+end
+
+local function fire_worktrees_changed()
+  vim.api.nvim_exec_autocmds("User", { pattern = "ReviewWorktreesChanged", modeline = false })
+end
+
 function M.rescan()
+  local before = signature()
   M.worktrees = {}
   for _, repo in ipairs(scan(M.root)) do
     vim.list_extend(M.worktrees, list_worktrees(repo))
@@ -163,6 +197,7 @@ function M.rescan()
   if M.active then
     M.active = M.find(M.active.path) or M.active
   end
+  if signature() ~= before then fire_worktrees_changed() end
 end
 
 ---Longest-prefix match of `path` against known worktrees.
@@ -177,24 +212,31 @@ function M.find(path)
   return best
 end
 
----Like find(), but registers worktrees outside the root (e.g. an agent worktree elsewhere).
+---Like find(), but asks git for the exact worktree and registers ones we do not know yet
+---(e.g. an agent worktree outside the root, or one nested inside another repo's directory,
+---where a plain path-prefix match would pick the outer repo).
 function M.resolve(path)
-  local found = M.find(path)
-  if found then return found end
-  local dir = uv.fs_stat(path) and uv.fs_stat(path).type == "directory" and path or vim.fs.dirname(path)
+  path = realpath(path)
+  local st = uv.fs_stat(path)
+  local dir = st and st.type == "directory" and path or vim.fs.dirname(path)
   local top = M.git(dir, { "rev-parse", "--show-toplevel" })
-  if not top then return nil end
+  if not top then return M.find(path) end
   top = realpath(vim.trim(top))
-  local common = M.git(dir, { "rev-parse", "--path-format=absolute", "--git-common-dir" })
-  local repo_path = common and vim.fs.dirname(vim.trim(common)) or top
+  local known = M.find(top)
+  if known and known.path == top then return known end
   M.extra = M.extra or {}
-  for _, wt in ipairs(list_worktrees(repo_path)) do
-    if not M.find(wt.path) then
+  local added = false
+  for _, wt in ipairs(list_worktrees(top)) do
+    local have = M.find(wt.path)
+    if not have or have.path ~= wt.path then
       M.extra[#M.extra + 1] = wt
       M.worktrees[#M.worktrees + 1] = wt
+      added = true
     end
   end
-  return M.find(path)
+  if added then fire_worktrees_changed() end
+  local wt = M.find(top)
+  return wt and wt.path == top and wt or nil
 end
 
 function M.repos()
@@ -249,7 +291,7 @@ function M.refresh_meta()
   if not M.active then return end
   M.active.branch = M.current_branch(M.active)
   M.meta.dirty = M.dirty_count(M.active)
-  M.meta.base_label = select(2, M.base_ref(M.active))
+  M.meta.base_ref, M.meta.base_label = M.base_ref(M.active)
   vim.cmd("redrawstatus")
 end
 

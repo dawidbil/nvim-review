@@ -50,6 +50,13 @@ them can find it. Then `<leader>cs` (visual) sends your selection.
 Not needed: nvim-treesitter, a C compiler, the `tree-sitter` CLI, fzf, delta, LSP servers. Only the
 markdown/lua/vim parsers bundled with Neovim are used; other filetypes use Vim's regex syntax.
 
+## Security notes
+
+- The control socket lives in a private 0700 directory; Neovim RPC lets a connecting process run Lua.
+- Repos under the root are treated as untrusted: repo-local `core.fsmonitor`/hooks are overridden for all
+  git calls. Residual risk: `filter.*` clean/smudge drivers in a repo's config. Do not put repos you
+  do not trust under the root.
+
 ## Layout
 
 ```
@@ -57,6 +64,7 @@ init.lua, lua/review/   the config (context, pickers, diff, harness, theme, keym
 bin/nvim-review         launcher + harness CLI (sets NVIM_APPNAME, checks version)
 scripts/ctl.lua         RPC client behind `nvim-review open|diff|status`
 scripts/make-fixtures.sh  fake repos + worktrees for testing
+scripts/make-edge-fixtures.sh + tests/   awkward-name/bare-repo/fsmonitor-trap repos and regression checks
 install.sh              symlinks config + launcher
 nvim-pack-lock.json     pinned plugin revisions (vim.pack)
 docs/             idea, plan, plugin vetting, fixtures

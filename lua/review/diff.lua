@@ -6,6 +6,7 @@ local M = {}
 
 M.session = nil ---@type {wt: review.Worktree, ref: string, file: string, lwin: integer, rwin: integer, lbuf: integer}?
 M.files = {} ---@type table[] last computed changed-file list, for ]f / [f
+M.last = nil ---@type {path: string, file: string}? file under review; survives "no changes under this base"
 
 local STATUS_HL = { M = "DiffChange", A = "DiffAdd", ["?"] = "DiffAdd", D = "DiffDelete", R = "DiffText", C = "DiffAdd" }
 
@@ -29,28 +30,59 @@ local function parse_name_status(out)
   return files
 end
 
----Split a multi-file unified diff into { [path] = text }.
-local function split_diff(text)
-  local blocks, cur, cur_file = {}, nil, nil
+---Split a multi-file unified diff into one text block per file, in git's output order.
+---(Content lines always start with " ", "+" or "-", so "diff --git " only ever starts a header.)
+local function split_blocks(text)
+  local blocks, cur = {}, nil
   for line in (text .. "\n"):gmatch("(.-)\n") do
-    local b = line:match("^diff %-%-git a/.- b/(.*)$")
-    if b then
-      cur_file, cur = b, {}
-      blocks[cur_file] = cur
+    if line:sub(1, 11) == "diff --git " or line:sub(1, 8) == "diff --cc" then
+      cur = {}
+      blocks[#blocks + 1] = cur
     end
     if cur then cur[#cur + 1] = line end
   end
-  for k, v in pairs(blocks) do
-    blocks[k] = table.concat(v, "\n")
-  end
+  for i, b in ipairs(blocks) do blocks[i] = table.concat(b, "\n") end
   return blocks
+end
+
+---`git diff --numstat -z`: binary files report "-" for both counts. Renames carry two extra tokens.
+local function parse_binary(out)
+  local binary, toks = {}, vim.split(out, "\0", { plain = true })
+  local i = 1
+  while i <= #toks do
+    local rec = toks[i]
+    if rec == "" then break end
+    local added, _, path = rec:match("^(%-?%d*)\t(%-?%d*)\t(.*)$")
+    if path == "" then -- rename/copy: "<a>\t<d>\t" NUL old NUL new
+      path = toks[i + 2]
+      i = i + 3
+    else
+      i = i + 1
+    end
+    if added == "-" and path then binary[path] = true end
+  end
+  return binary
+end
+
+-- Never run external diff drivers / textconv from a repo's own config; `--` ends revisions so
+-- a file named like a ref (e.g. "HEAD") cannot be mistaken for one.
+local SAFE = { "--no-ext-diff", "--no-textconv" }
+
+local function git_diff(wt, ref, extra, paths)
+  local args = { "-c", "core.quotePath=false", "diff" }
+  vim.list_extend(args, SAFE)
+  vim.list_extend(args, extra)
+  args[#args + 1] = ref
+  args[#args + 1] = "--"
+  if paths then vim.list_extend(args, paths) end
+  return ctx.git(wt.path, args) or ""
 end
 
 ---@param wt review.Worktree
 ---@param ref string
 function M.changed_files(wt, ref)
-  local out = ctx.git(wt.path, { "diff", "--name-status", "-M", "-z", ref }) or ""
-  local files = parse_name_status(out)
+  local files = parse_name_status(git_diff(wt, ref, { "--name-status", "-M", "-z" }))
+  local tracked = #files
   local seen = {}
   for _, f in ipairs(files) do seen[f.file] = true end
 
@@ -61,17 +93,13 @@ function M.changed_files(wt, ref)
     end
   end
 
-  -- diff text (for previews) + binary detection
-  local diff_text = ctx.git(wt.path, { "diff", "-M", ref }) or ""
-  local blocks = split_diff(diff_text)
-  local numstat = ctx.git(wt.path, { "diff", "--numstat", "-M", ref }) or ""
-  local binary = {}
-  for line in numstat:gmatch("[^\n]+") do
-    local path = line:match("^%-\t%-\t(.*)$")
-    if path then binary[path] = true end
-  end
+  -- diff text for previews: same order as --name-status, so match blocks by position.
+  -- If the counts ever disagree, fall back to one `git diff` per file.
+  local blocks = split_blocks(git_diff(wt, ref, { "-M" }))
+  local by_index = #blocks == tracked
+  local binary = parse_binary(git_diff(wt, ref, { "--numstat", "-M", "-z" }))
 
-  for _, f in ipairs(files) do
+  for i, f in ipairs(files) do
     f.binary = binary[f.file] or false
     if f.status == "?" then
       local abs = wt.path .. "/" .. f.file
@@ -90,8 +118,14 @@ function M.changed_files(wt, ref)
         f.diff = ("diff --git a/%s b/%s\nnew file\n--- /dev/null\n+++ b/%s\n@@ -0,0 +1,%d @@\n%s"):format(
           f.file, f.file, f.file, #lines, table.concat(lines, "\n"))
       end
+    elseif f.binary then
+      f.diff = ("Binary file %s differs"):format(f.file)
+    elseif by_index then
+      f.diff = blocks[i] -- tracked entries come first, in git's order
     else
-      f.diff = blocks[f.file] or (f.binary and ("Binary file %s differs"):format(f.file) or "")
+      local paths = { f.file }
+      if f.old and f.old ~= f.file then paths[#paths + 1] = f.old end
+      f.diff = git_diff(wt, ref, { "-M" }, paths)
     end
   end
   table.sort(files, function(a, b) return a.file < b.file end)
@@ -121,6 +155,12 @@ local function inline_off()
   end
 end
 
+---Close the diff and forget the file (explicit dismissal, `<leader>dq`).
+function M.dismiss()
+  M.close()
+  M.last = nil
+end
+
 function M.close()
   local s = M.session
   M.session = nil
@@ -140,6 +180,7 @@ end
 ---Open the side-by-side diff of one changed-file entry.
 function M.open(wt, ref, item)
   M.close()
+  M.last = { path = wt.path, file = item.file }
   if item.binary then
     vim.notify(("Binary file changed: %s"):format(item.file), vim.log.levels.WARN, { title = "review" })
     return
@@ -295,31 +336,55 @@ function M.step(dir)
   M.open(wt, ref, M.files[nxt])
 end
 
----Open the review of a worktree directly on its first changed file (used by the harness).
+---Open the review of a worktree directly on its first non-binary changed file.
+---@return boolean opened
 function M.open_first(wt)
   local ref = refresh(wt)
-  if #M.files > 0 then M.open(wt, ref, M.files[1]) end
+  for _, f in ipairs(M.files) do
+    if not f.binary then
+      M.open(wt, ref, f)
+      return true
+    end
+  end
+  return false
 end
 
--- keep gitsigns' gutter in sync with the review base
+-- Keep gitsigns' base in sync with the review base. change_base() is async and two calls can
+-- finish out of order, so only one runs at a time and we re-check the wanted base afterwards.
+-- "HEAD" is passed explicitly: nil would mean the index and hide staged changes.
+local gs_inflight = false
 local function sync_gitsigns()
   local ok, gs = pcall(require, "gitsigns")
-  if not ok or not ctx.active then return end
-  local ref = ctx.base_ref(ctx.active)
-  pcall(gs.change_base, ref ~= "HEAD" and ref or nil, true)
+  if not ok or not ctx.active or gs_inflight then return end
+  local want = ctx.meta.base_ref or "HEAD"
+  gs_inflight = true
+  local done = false
+  local function finish()
+    if done then return end
+    done = true
+    gs_inflight = false
+    if (ctx.meta.base_ref or "HEAD") ~= want then sync_gitsigns() end
+  end
+  local started = pcall(gs.change_base, want, true, finish)
+  if not started then finish() else vim.defer_fn(finish, 2000) end -- never stay "in flight" forever
 end
 
 ---Re-open the file currently under review (after the base or the view mode changed).
 function M.reopen()
-  local file = M.session and M.session.file
+  local file = M.session and M.session.file or (M.last and M.last.file)
   M.close()
   sync_gitsigns()
-  if not file or not ctx.active then return end
-  local ref, label = refresh(ctx.active)
+  local wt = ctx.active
+  if not file or not wt or (M.last and M.last.path ~= wt.path) then return end
+  local ref, label = refresh(wt)
   for _, f in ipairs(M.files) do
-    if f.file == file then return M.open(ctx.active, ref, f) end
+    if f.file == file then return M.open(wt, ref, f) end
   end
-  vim.notify(("No changes in %s vs %s"):format(file, label), vim.log.levels.INFO, { title = "review" })
+  -- Not changed under this base: keep showing the file (plain) and remember it, so the next
+  -- toggle brings its diff back.
+  local abs = wt.path .. "/" .. file
+  if vim.uv.fs_stat(abs) then vim.cmd.edit(vim.fn.fnameescape(abs)) end
+  vim.notify(("No changes in %s vs %s (toggle again to see its diff)"):format(file, label), vim.log.levels.INFO, { title = "review" })
 end
 
 function M.setup()
@@ -327,6 +392,7 @@ function M.setup()
     pattern = "ReviewContextChanged",
     callback = function()
       M.close()
+      M.last = nil
       sync_gitsigns()
     end,
   })

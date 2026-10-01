@@ -74,8 +74,12 @@ elseif cmd ~= "status" and cmd ~= "ping" then
   usage(2)
 end
 
--- find a live server: this root's socket, else the only live nvim-review socket
-local sock = harness.socket_path(ctx.root)
+-- find a live server: this root's socket, else the only live socket in our private directory
+local sock, serr = harness.socket_path(ctx.root)
+if not sock then
+  io.stderr:write("nvim-review: " .. serr .. "\n")
+  quit(1)
+end
 local function connect(path)
   if not vim.uv.fs_stat(path) then return nil end
   local ok, chan = pcall(vim.fn.sockconnect, "pipe", path, { rpc = true })
@@ -83,10 +87,8 @@ local function connect(path)
 end
 local chan = connect(sock)
 if not chan then
-  local dir = vim.env.XDG_RUNTIME_DIR
-  if not dir or dir == "" then dir = "/tmp" end
   local live = {}
-  for _, p in ipairs(vim.fn.glob(dir .. "/nvim-review-*.sock", false, true)) do
+  for _, p in ipairs(vim.fn.glob(vim.fs.dirname(sock) .. "/nvim-review-*.sock", false, true)) do
     local c = connect(p)
     if c then live[#live + 1] = c end
   end
