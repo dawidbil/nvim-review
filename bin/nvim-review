@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Launch the review-first Neovim distro in isolation from any other nvim config.
+# Config is looked up at ~/.config/nvim-review (symlink created by ./install.sh).
+set -euo pipefail
+case "${1:-}" in -h|--help)
+  echo "usage: nvim-review [nvim args...]
+Runs Neovim >= 0.12 with NVIM_APPNAME=nvim-review.
+Binary lookup: \$NVIM_REVIEW_BIN, then nvim-0.12, then nvim."
+  exit 0;; esac
+bin="${NVIM_REVIEW_BIN:-}"
+[ -z "$bin" ] && bin="$(command -v nvim-0.12 || command -v nvim)"
+ver="$("$bin" --version | head -1 | sed 's/NVIM v//')"
+if [ "$(printf '%s\n0.12.0\n' "$ver" | sort -V | head -1)" != "0.12.0" ]; then
+  echo "nvim-review needs Neovim >= 0.12 (found $ver at $bin)" >&2; exit 1
+fi
+NVIM_APPNAME=nvim-review exec "$bin" "$@"
