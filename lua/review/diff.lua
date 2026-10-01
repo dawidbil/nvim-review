@@ -75,10 +75,13 @@ function M.changed_files(wt, ref)
     f.binary = binary[f.file] or false
     if f.status == "?" then
       local abs = wt.path .. "/" .. f.file
-      local fh = io.open(abs, "rb")
+      local lst = vim.uv.fs_lstat(abs)
+      local fh = not (lst and lst.type == "link") and io.open(abs, "rb") or nil
       local data = fh and fh:read(64 * 1024) or ""
       if fh then fh:close() end
-      if data:find("\0", 1, true) then
+      if lst and lst.type == "link" then
+        f.diff = ("new symlink -> %s"):format(vim.uv.fs_readlink(abs) or "?")
+      elseif data:find("\0", 1, true) then
         f.binary = true
         f.diff = ("new binary file %s"):format(f.file)
       else

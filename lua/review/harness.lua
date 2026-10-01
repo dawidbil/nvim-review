@@ -77,9 +77,14 @@ end
 function M.setup()
   -- RPC socket per root (first instance for a root owns it)
   local sock = M.socket_path(ctx.root)
-  if not alive(sock) then
+  if #sock > 100 then
+    vim.notify("nvim-review: socket path too long for a unix socket (" .. #sock .. " chars); `nvim-review open|diff` will not work. Shorten $XDG_RUNTIME_DIR.", vim.log.levels.WARN)
+  elseif not alive(sock) then
     pcall(os.remove, sock)
-    pcall(vim.fn.serverstart, sock)
+    local ok, res = pcall(vim.fn.serverstart, sock)
+    if not ok or res == "" then
+      vim.notify("nvim-review: could not start RPC socket " .. sock .. ": " .. tostring(res), vim.log.levels.WARN)
+    end
   end
   M.socket = sock
 

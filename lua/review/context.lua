@@ -24,6 +24,11 @@ M.meta = { dirty = 0, base_label = "HEAD" }
 local function realpath(p) return uv.fs_realpath(p) or p end
 
 ---Run git in `path`. Returns stdout (or nil on failure), stderr, exit code.
+---Status notification that replaces itself instead of stacking.
+function M.notify(msg)
+  vim.notify(msg, vim.log.levels.INFO, { title = "review", id = "review-status" })
+end
+
 function M.git(path, args, allow_fail)
   local cmd = vim.list_extend({ "git", "-C", path }, args)
   local r = vim.system(cmd, { text = true }):wait()
@@ -273,7 +278,7 @@ function M.set_active(wt, opts)
   M.refresh_meta()
   vim.api.nvim_exec_autocmds("User", { pattern = "ReviewContextChanged", modeline = false })
   if not opts.silent then
-    vim.notify(("Worktree: %s"):format(M.statusline()), vim.log.levels.INFO, { title = "review" })
+    M.notify(("Worktree: %s"):format(M.statusline()))
   end
 end
 
@@ -299,7 +304,7 @@ function M.toggle_base()
   M.base_mode = M.base_mode == "head" and "merge-base" or "head"
   M.refresh_meta()
   vim.api.nvim_exec_autocmds("User", { pattern = "ReviewBaseChanged", modeline = false })
-  vim.notify("Review base: " .. M.meta.base_label, vim.log.levels.INFO, { title = "review" })
+  M.notify("Review base: " .. M.meta.base_label)
 end
 
 function M.toggle_view()
@@ -307,7 +312,7 @@ function M.toggle_view()
   write_state(function(d) d.view = M.view_mode end)
   vim.cmd("redrawstatus")
   vim.api.nvim_exec_autocmds("User", { pattern = "ReviewViewChanged", modeline = false })
-  vim.notify("Review view: " .. M.view_mode, vim.log.levels.INFO, { title = "review" })
+  M.notify("Review view: " .. M.view_mode)
 end
 
 function M.setup()

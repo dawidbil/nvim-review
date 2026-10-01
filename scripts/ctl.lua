@@ -3,6 +3,11 @@
 local ctx = require("review.context")
 local harness = require("review.harness")
 
+-- :qall!/:cquit shut Neovim down cleanly (os.exit would leak its own RPC socket file)
+local function quit(code)
+  if code == 0 then vim.cmd("qall!") else vim.cmd("cquit " .. code) end
+end
+
 local function usage(code)
   io.stderr:write([==[
 usage: nvim-review <command> [args]
@@ -13,7 +18,7 @@ usage: nvim-review <command> [args]
   root                      print the detected root
 env: MARCUS_ROOT overrides root detection.
 ]==])
-  os.exit(code)
+  quit(code)
 end
 
 local cmd = arg[1]
@@ -23,7 +28,7 @@ local cwd = vim.uv.cwd()
 ctx.root = ctx.find_root(cwd)
 if cmd == "root" then
   io.write(ctx.root, "\n")
-  os.exit(0)
+  quit(0)
 end
 
 local function abs(p) return vim.fn.fnamemodify(p, ":p"):gsub("/$", "") end
@@ -36,8 +41,13 @@ while i <= #arg do
   if a == "--base" then
     args.base = arg[i + 1]
     i = i + 1
+  elseif a:match("^%-%-base=") then
+    args.base = a:sub(8)
   elseif a == "--first" then
     args.first = true
+  elseif a:sub(1, 2) == "--" then
+    io.stderr:write("unknown option: " .. a .. "\n")
+    usage(2)
   else
     positional[#positional + 1] = a
   end
@@ -48,6 +58,10 @@ if cmd == "open" then
   local target = positional[1] or cwd
   local file, line = target:match("^(.-):(%d+)$")
   if file and vim.uv.fs_stat(file) then target = file else line = nil end
+  if not vim.uv.fs_stat(target) then
+    io.stderr:write("no such file or directory: " .. target .. "\n")
+    quit(1)
+  end
   target = abs(target)
   args.path = target
   if vim.uv.fs_stat(target) and vim.uv.fs_stat(target).type == "file" then
@@ -80,22 +94,22 @@ if not chan then
 end
 if not chan then
   io.stderr:write("no running nvim-review for root " .. ctx.root .. "\n")
-  os.exit(3)
+  quit(3)
 end
 
 local ok, res = pcall(vim.rpcrequest, chan, "nvim_exec_lua",
   "return require('review.harness').handle(...)", { cmd, args })
 if not ok then
   io.stderr:write("rpc failed: " .. tostring(res) .. "\n")
-  os.exit(1)
+  quit(1)
 end
 if type(res) == "table" and res.error then
   io.stderr:write(res.error .. "\n")
-  os.exit(1)
+  quit(1)
 end
 if cmd == "status" then
   io.write(vim.json.encode(res), "\n")
 elseif type(res) == "table" and res.active then
   io.write("ok: ", res.active, "\n")
 end
-os.exit(0)
+quit(0)

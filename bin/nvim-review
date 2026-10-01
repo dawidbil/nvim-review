@@ -22,7 +22,8 @@ EOF
 case "${1:-}" in -h|--help) usage; exit 0;; esac
 
 bin="${NVIM_REVIEW_BIN:-}"
-[ -z "$bin" ] && bin="$(command -v nvim-0.12 || command -v nvim)"
+[ -z "$bin" ] && bin="$(command -v nvim-0.12 || command -v nvim || true)"
+[ -n "$bin" ] || { echo "nvim-review: no Neovim found (need >= 0.12; set NVIM_REVIEW_BIN)" >&2; exit 1; }
 ver="$("$bin" --version | head -1 | sed 's/NVIM v//')"
 if [ "$(printf '%s\n0.12.0\n' "$ver" | sort -V | head -1)" != "0.12.0" ]; then
   echo "nvim-review needs Neovim >= 0.12 (found $ver at $bin)" >&2; exit 1
