@@ -109,10 +109,20 @@ local function scratch(name, lines, ft)
   return buf
 end
 
+local function inline_off()
+  local ok, gs = pcall(require, "gitsigns")
+  if ok then
+    pcall(gs.toggle_linehl, false)
+    pcall(gs.toggle_word_diff, false)
+    pcall(gs.toggle_deleted, false)
+  end
+end
+
 function M.close()
   local s = M.session
   M.session = nil
   if not s then return end
+  if s.inline then inline_off() end
   if vim.api.nvim_win_is_valid(s.rwin) then
     vim.api.nvim_win_call(s.rwin, function() vim.cmd("diffoff") end)
   end
@@ -132,6 +142,30 @@ function M.open(wt, ref, item)
     return
   end
   local abs = wt.path .. "/" .. item.file
+  if ctx.view_mode == "inline" and item.status ~= "D" then
+    -- Inline (unified) view: the real file, with removed lines shown as virtual lines
+    -- and changed lines/words highlighted by gitsigns against the review base.
+    vim.cmd.edit(vim.fn.fnameescape(abs))
+    local gs = require("gitsigns")
+    gs.toggle_linehl(true)
+    gs.toggle_word_diff(true)
+    gs.toggle_deleted(true)
+    M.session = { wt = wt, ref = ref, file = item.file, inline = true, lwin = -1, rwin = vim.api.nvim_get_current_win(), lbuf = -1 }
+    -- gitsigns computes hunks asynchronously: wait until they exist, then jump to the first
+    local buf, tries = vim.api.nvim_get_current_buf(), 0
+    local function jump()
+      tries = tries + 1
+      if not vim.api.nvim_buf_is_valid(buf) or vim.api.nvim_get_current_buf() ~= buf then return end
+      local hunks = gs.get_hunks(buf)
+      if hunks and #hunks > 0 then
+        pcall(gs.nav_hunk, "first", { navigation_message = false })
+      elseif tries < 15 then
+        vim.defer_fn(jump, 100)
+      end
+    end
+    vim.defer_fn(jump, 100)
+    return
+  end
   local base_lines = {}
   if item.status ~= "A" and item.status ~= "?" then
     local out = ctx.git(wt.path, { "show", ref .. ":" .. item.old }) or ""
@@ -272,6 +306,19 @@ local function sync_gitsigns()
   pcall(gs.change_base, ref ~= "HEAD" and ref or nil, true)
 end
 
+---Re-open the file currently under review (after the base or the view mode changed).
+function M.reopen()
+  local file = M.session and M.session.file
+  M.close()
+  sync_gitsigns()
+  if not file or not ctx.active then return end
+  local ref, label = refresh(ctx.active)
+  for _, f in ipairs(M.files) do
+    if f.file == file then return M.open(ctx.active, ref, f) end
+  end
+  vim.notify(("No changes in %s vs %s"):format(file, label), vim.log.levels.INFO, { title = "review" })
+end
+
 function M.setup()
   vim.api.nvim_create_autocmd("User", {
     pattern = "ReviewContextChanged",
@@ -279,6 +326,10 @@ function M.setup()
       M.close()
       sync_gitsigns()
     end,
+  })
+  vim.api.nvim_create_autocmd("User", {
+    pattern = { "ReviewBaseChanged", "ReviewViewChanged" },
+    callback = function() M.reopen() end,
   })
 end
 

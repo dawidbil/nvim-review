@@ -16,11 +16,13 @@ Leader = `Space`. Press it and wait: which-key shows every group. `<leader>?` li
 | | `fb` `,` / `fr` / `fl` / `fj` / `fm` | Buffers / recent / buffer lines / jumps / marks |
 | | `fh` `fk` `fR` | Help / keymaps / resume last picker |
 | | `<leader>e` | File explorer at the worktree |
+| | `Alt-h` / `Alt-i` (in a picker) | Toggle hidden / gitignored files. Hidden files are shown by default, `.git` never is |
 | **diff / review** | `<leader>dd` | Changed files vs base (preview + open side-by-side) |
 | | `<leader>dc` | Diff the current file |
 | | `]f` / `[f` | Next / previous changed file |
 | | `]c` / `[c` | Next / previous hunk (native in diff view, gitsigns otherwise) |
-| | `<leader>dB` | Toggle base: HEAD (default) ↔ merge-base with the default branch |
+| | `<leader>dB` | Toggle base: HEAD (default) ↔ merge-base with the default branch (re-opens the same file) |
+| | `<leader>dv` | Toggle view: side-by-side ↔ inline (removed lines as virtual lines, changed lines/words highlighted); remembered |
 | | `<leader>dq` | Close the diff view |
 | | `<leader>dh` `di` `dw` | Preview hunk / inline hunk / word diff |
 | | `<leader>dr` | Revert hunk (normal) or selected lines (visual) |

@@ -8,17 +8,40 @@ vim.pack.add({
   gh("nvim-mini/mini.icons"),
   gh("nvim-mini/mini.statusline"),
   gh("coder/claudecode.nvim"),
-  -- colorschemes (switchable at runtime, see review.theme)
+}, { confirm = false })
+
+-- Colorschemes are installed but only loaded when selected (see review.theme).
+vim.pack.add({
   gh("ellisonleao/gruvbox.nvim"),
   gh("catppuccin/nvim", "catppuccin"),
   gh("folke/tokyonight.nvim"),
   gh("rebelot/kanagawa.nvim"),
   gh("rose-pine/neovim", "rose-pine"),
-}, { confirm = false })
+  gh("EdenEast/nightfox.nvim"),
+  gh("navarasu/onedark.nvim"),
+  gh("sainnhe/everforest"),
+  gh("AlexvZyl/nordic.nvim"),
+  gh("Mofiqul/vscode.nvim"),
+  gh("nyoom-engineering/oxocarbon.nvim"),
+  gh("bluz71/vim-moonfly-colors", "moonfly"),
+  gh("loctvl842/monokai-pro.nvim"),
+  gh("sainnhe/sonokai"),
+  gh("marko-cerovac/material.nvim"),
+}, { confirm = false, load = false })
 
 require("mini.icons").setup()
 require("snacks").setup({
-  picker = { enabled = true },
+  picker = {
+    enabled = true,
+    -- Show dotfiles/dot-dirs (.github, .claude, .ai, ...). .git is always excluded and
+    -- .gitignore is still respected; Alt-h / Alt-i toggle hidden / ignored inside a picker.
+    sources = {
+      files = { hidden = true },
+      grep = { hidden = true },
+      grep_word = { hidden = true },
+      explorer = { hidden = true },
+    },
+  },
   explorer = { enabled = true },
   notifier = { enabled = true },
   input = { enabled = true },
@@ -42,7 +65,7 @@ require("mini.statusline").setup({
         "%<",
         { hl = "MiniStatuslineFilename", strings = { vim.fn.expand("%:.") .. "%m%r" } },
         "%=",
-        { hl = "MiniStatuslineFileinfo", strings = { "vs " .. ctx.meta.base_label, vim.bo.filetype } },
+        { hl = "MiniStatuslineFileinfo", strings = { "vs " .. ctx.meta.base_label .. " · " .. ctx.view_mode, vim.bo.filetype } },
         { hl = mode_hl, strings = { sl.section_location({ trunc_width = 75 }) } },
       })
     end,

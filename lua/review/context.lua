@@ -9,6 +9,7 @@ M.root = nil ---@type string?
 M.worktrees = {} ---@type review.Worktree[]
 M.active = nil ---@type review.Worktree?
 M.base_mode = "head" ---@type "head"|"merge-base"
+M.view_mode = "split" ---@type "split"|"inline" (persisted)
 M.meta = { dirty = 0, base_label = "HEAD" }
 
 ---@class review.Worktree
@@ -297,8 +298,16 @@ end
 function M.toggle_base()
   M.base_mode = M.base_mode == "head" and "merge-base" or "head"
   M.refresh_meta()
-  vim.api.nvim_exec_autocmds("User", { pattern = "ReviewContextChanged", modeline = false })
+  vim.api.nvim_exec_autocmds("User", { pattern = "ReviewBaseChanged", modeline = false })
   vim.notify("Review base: " .. M.meta.base_label, vim.log.levels.INFO, { title = "review" })
+end
+
+function M.toggle_view()
+  M.view_mode = M.view_mode == "split" and "inline" or "split"
+  write_state(function(d) d.view = M.view_mode end)
+  vim.cmd("redrawstatus")
+  vim.api.nvim_exec_autocmds("User", { pattern = "ReviewViewChanged", modeline = false })
+  vim.notify("Review view: " .. M.view_mode, vim.log.levels.INFO, { title = "review" })
 end
 
 function M.setup()
@@ -306,6 +315,7 @@ function M.setup()
   M.rescan()
   local st = read_state()
   M.base_mode = "head" -- always start against HEAD; toggle with <leader>dB
+  M.view_mode = st.view == "inline" and "inline" or "split"
   local cwd_wt = M.find(uv.cwd())
   local saved = st[M.root] and st[M.root].active and M.find(st[M.root].active)
   local first_arg = vim.fn.argv(0)

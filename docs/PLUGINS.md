@@ -206,3 +206,24 @@ Rejected: diffview.nvim (dormant ~2 yrs), github-nvim-theme (idle), telescope (h
 2. claudecode.nvim: Claude CLI auto-connect/`/ide` listing when nvim cwd is root but worktree is elsewhere; whether the lock file needs a manual update after `:tcd`.
 3. snacks.nvim minimum Neovim version and the freshness of the 4-month-old last push versus issue backlog.
 4. Whether `vim.pack` handles plugin-manifest `build` hooks adequately for nvim-treesitter's `:TSUpdate`.
+
+
+## Addendum 2026-10-01: extra colorschemes
+
+Checked via the GitHub API (stars, last push). All load lazily (`packadd` on selection).
+
+| Plugin | Stars | Last push | Variants offered | Verdict |
+|--------|-------|-----------|------------------|---------|
+| EdenEast/nightfox.nvim | 4.1k | 2026-07 | nightfox, carbonfox, dayfox | PASS |
+| sainnhe/everforest | 4.2k | 2026-06 | dark, light | PASS |
+| navarasu/onedark.nvim | 2.0k | 2026-04 | onedark | PASS |
+| sainnhe/sonokai | 2.0k | 2026-01 | sonokai | PASS |
+| nyoom-engineering/oxocarbon.nvim | 1.6k | 2026-09 | dark, light | PASS |
+| bluz71/vim-moonfly-colors | 1.3k | 2026-09 | moonfly | PASS |
+| marko-cerovac/material.nvim | 1.1k | 2026-02 | material | PASS |
+| AlexvZyl/nordic.nvim | 1.1k | 2026-05 | nordic (nord-style) | PASS |
+| Mofiqul/vscode.nvim | 1.0k | 2026-09 | dark, light | PASS |
+| loctvl842/monokai-pro.nvim | 720 | 2026-05 | monokai-pro | PASS |
+| projekt0n/github-nvim-theme | 2.5k | 2024-12 | - | FAIL (idle) |
+| shaunsingh/nord.nvim | 1.0k | 2024-06 | - | FAIL (idle; nordic used instead) |
+| Mofiqul/dracula.nvim | 784 | 2025-11 | - | skipped (~11 months idle) |
