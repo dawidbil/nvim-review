@@ -8,7 +8,7 @@ Status: working foundation (context, scoped search, diff review, harness CLI, th
 ## Install
 
 ```sh
-git clone <this repo> ~/nvim-for-reviewing && cd ~/nvim-for-reviewing
+git clone git@github.com:dawidbil/nvim-review.git ~/nvim-for-reviewing && cd ~/nvim-for-reviewing
 ./install.sh        # links ~/.config/nvim-review and ~/.local/bin/nvim-review
 nvim-review         # runs with NVIM_APPNAME=nvim-review, coexists with any other nvim config
 ```
