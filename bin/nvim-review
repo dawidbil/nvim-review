@@ -1,16 +1,54 @@
 #!/usr/bin/env bash
-# Launch the review-first Neovim distro in isolation from any other nvim config.
-# Config is looked up at ~/.config/nvim-review (symlink created by ./install.sh).
+# nvim-review: launcher + harness control for the review-first Neovim distro.
+#   nvim-review [nvim args]            start the editor (NVIM_APPNAME=nvim-review)
+#   nvim-review open|diff|status|root  control a running instance (starts one if needed)
 set -euo pipefail
-case "${1:-}" in -h|--help)
-  echo "usage: nvim-review [nvim args...]
-Runs Neovim >= 0.12 with NVIM_APPNAME=nvim-review.
-Binary lookup: \$NVIM_REVIEW_BIN, then nvim-0.12, then nvim."
-  exit 0;; esac
+self="$(readlink -f "${BASH_SOURCE[0]}")"
+here="$(dirname "$(dirname "$self")")"
+
+usage() {
+  cat <<'EOF'
+usage: nvim-review [nvim args...]
+       nvim-review open [path[:line]]
+       nvim-review diff [dir] [--base head|merge-base] [--first]
+       nvim-review status | root
+Runs Neovim >= 0.12 with NVIM_APPNAME=nvim-review. Control commands talk to the running
+instance for the current root (starting a new terminal window if none is running).
+Binary lookup: $NVIM_REVIEW_BIN, then nvim-0.12, then nvim.
+New-window command: $NVIM_REVIEW_TERMINAL (default: kitty --class nvim-review).
+EOF
+}
+
+case "${1:-}" in -h|--help) usage; exit 0;; esac
+
 bin="${NVIM_REVIEW_BIN:-}"
 [ -z "$bin" ] && bin="$(command -v nvim-0.12 || command -v nvim)"
 ver="$("$bin" --version | head -1 | sed 's/NVIM v//')"
 if [ "$(printf '%s\n0.12.0\n' "$ver" | sort -V | head -1)" != "0.12.0" ]; then
   echo "nvim-review needs Neovim >= 0.12 (found $ver at $bin)" >&2; exit 1
 fi
-NVIM_APPNAME=nvim-review exec "$bin" "$@"
+export NVIM_APPNAME=nvim-review
+
+ctl() { "$bin" --headless -l "$here/scripts/ctl.lua" "$@"; }
+
+case "${1:-}" in
+  open|diff|status|root|ping)
+    rc=0; ctl "$@" || rc=$?
+    if [ "$rc" = 3 ] && [ "$1" != "status" ] && [ "$1" != "root" ]; then
+      term="${NVIM_REVIEW_TERMINAL:-kitty --class nvim-review}"
+      echo "starting new nvim-review window..." >&2
+      # shellcheck disable=SC2086
+      setsid $term "$self" >/dev/null 2>&1 &
+      for _ in $(seq 1 40); do
+        sleep 0.25
+        rc=0; ctl ping >/dev/null 2>&1 || rc=$?
+        [ "$rc" = 0 ] && break
+      done
+      [ "$rc" = 0 ] || { echo "nvim-review did not come up" >&2; exit 1; }
+      ctl "$@"
+    else
+      exit "$rc"
+    fi
+    ;;
+  *) exec "$bin" "$@";;
+esac

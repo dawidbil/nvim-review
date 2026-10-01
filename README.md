@@ -3,7 +3,7 @@
 Personal review-first Neovim distribution for an agentic workflow: review and lightly edit
 agent-written code across repositories and git worktrees. See `docs/IDEA.md` (brief),
 `docs/PLAN.md` (plan and decisions), `docs/PLUGINS.md` (plugin vetting).
-Status: planning / foundation.
+Status: working foundation (context, scoped search, diff review, harness CLI, themes, markdown).
 
 ## Install
 
@@ -13,29 +13,51 @@ git clone <this repo> ~/nvim-for-reviewing && cd ~/nvim-for-reviewing
 nvim-review         # runs with NVIM_APPNAME=nvim-review, coexists with any other nvim config
 ```
 
+## Using it
+
+| Command | What it does |
+|---------|--------------|
+| `nvim-review` | Start the editor (also takes normal nvim args). The first instance per root owns an RPC socket. |
+| `nvim-review open [path[:line]]` | Activate the worktree containing `path` (default `$PWD`) and open the file |
+| `nvim-review diff [dir] [--base head\|merge-base] [--first]` | Show that worktree's changed files (`--first` jumps into the first diff) |
+| `nvim-review status` / `root` | JSON of root/active/worktrees, or the detected root |
+
+If no instance is running, `open`/`diff` start a new window (`$NVIM_REVIEW_TERMINAL`, default
+`kitty --class nvim-review`, so a window manager rule can park it) and then run the command.
+Root = `$MARCUS_ROOT`, else the nearest ancestor that is a git repo containing other repos.
+Keymaps: `docs/KEYMAPS.md`. Test data: `scripts/make-fixtures.sh` (`docs/FIXTURES.md`).
+
+For an agent: tell it to run `nvim-review diff` (or `nvim-review open <file:line>`) from its worktree
+when it finishes. It works from any harness since it is only a shell command.
+
+Claude Code link: in the Claude Code session (separate terminal) run `/ide` and pick "Neovim".
+nvim advertises the root and every worktree as workspace folders, so a Claude started in any of
+them can find it. Then `<leader>cs` (visual) sends your selection.
+
 ## Dependencies (install on every machine)
 
-Provisional until `docs/PLUGINS.md` finalises the plugin set; update this list whenever a
-plugin adds a requirement.
+| Dependency | Required | Why / notes |
+|------------|----------|-------------|
+| Neovim **>= 0.12** | yes | Built-in `vim.pack`, OSC52, bundled markdown parsers. Tarball from GitHub releases (here: `~/.local/opt/`, linked as `nvim-0.12`) |
+| git | yes | Repo/worktree discovery, diffs; first start clones plugins over https |
+| ripgrep (`rg`) | yes | Grep, and file search when `fd` is absent |
+| Nerd Font in the terminal | yes | Icons |
+| Terminal with OSC52 (kitty) | yes | Mouse-select copies to the system clipboard |
+| fd | optional | Slightly faster file search |
+| `xclip` / `wl-clipboard` | optional | Paste from system clipboard |
+| Claude Code CLI | optional | Harness link (runs in a separate terminal, never inside nvim) |
 
-| Dependency | Why | Notes |
-|------------|-----|-------|
-| Neovim **>= 0.12** | Base editor (OSC52 clipboard, treesitter, diff options) | Tarball from GitHub releases; installed here to `~/.local/opt/`, linked as `nvim-0.12` |
-| git (with `worktree` support) | Repo/worktree discovery, diffs | |
-| ripgrep (`rg`) | Live grep | |
-| fd | Fast file finding | Not in default WSL; `apt install fd-find` (binary `fdfind`, link to `fd`) |
-| fzf | Only if the chosen picker needs it | TBD |
-| delta | Optional, nicer diff rendering | TBD |
-| C compiler (`gcc`/`cc`) + `tree-sitter` CLI | Build treesitter parsers | TBD per vetting |
-| A Nerd Font in the terminal | Icons | |
-| Terminal with OSC52 support (kitty) | Mouse-select copies to system clipboard, also over SSH | `xclip`/`wl-clipboard` as fallback |
-| Claude Code CLI | Harness integration | Runs in a separate terminal, not inside nvim |
+Not needed: nvim-treesitter, a C compiler, the `tree-sitter` CLI, fzf, delta, LSP servers. Only the
+markdown/lua/vim parsers bundled with Neovim are used; other filetypes use Vim's regex syntax.
 
 ## Layout
 
 ```
-bin/nvim-review   launcher (sets NVIM_APPNAME, checks version)
-install.sh        symlinks config + launcher
-scripts/          dev helpers (e.g. fixture generator)
+init.lua, lua/review/   the config (context, pickers, diff, harness, theme, keymaps, plugins)
+bin/nvim-review         launcher + harness CLI (sets NVIM_APPNAME, checks version)
+scripts/ctl.lua         RPC client behind `nvim-review open|diff|status`
+scripts/make-fixtures.sh  fake repos + worktrees for testing
+install.sh              symlinks config + launcher
+nvim-pack-lock.json     pinned plugin revisions (vim.pack)
 docs/             idea, plan, plugin vetting, fixtures
 ```
