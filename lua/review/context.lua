@@ -63,26 +63,31 @@ end
 
 local function is_hidden(name) return name:sub(1, 1) == "." end
 
----Repos directly under `dir` (depth 1 and 2), plus `dir` itself when it is a repo.
+---Scan depth below the root: $NVIM_REVIEW_DEPTH (default 2, i.e. root/a/b).
+local function scan_depth()
+  local n = tonumber(vim.env.NVIM_REVIEW_DEPTH)
+  return n and n >= 1 and math.floor(n) or 2
+end
+
+---Repos up to `scan_depth()` levels under `dir`, plus `dir` itself when it is a repo.
+---Does not descend into a repo or linked worktree.
 local function scan(dir)
   local repos = {}
   if repo_kind(dir) == "repo" then repos[#repos + 1] = dir end
-  for name, t in vim.fs.dir(dir) do
-    if not is_hidden(name) and not SKIP[name] and (t == "directory" or t == "link") then
-      local p = dir .. "/" .. name
-      local kind = repo_kind(p)
-      if kind == "repo" then
-        repos[#repos + 1] = p
-      elseif not kind then
-        for n2, t2 in vim.fs.dir(p) do
-          if not is_hidden(n2) and not SKIP[n2] and (t2 == "directory" or t2 == "link") then
-            local p2 = p .. "/" .. n2
-            if repo_kind(p2) == "repo" then repos[#repos + 1] = p2 end
-          end
+  local function walk(d, level)
+    for name, t in vim.fs.dir(d) do
+      if not is_hidden(name) and not SKIP[name] and (t == "directory" or t == "link") then
+        local p = d .. "/" .. name
+        local kind = repo_kind(p)
+        if kind == "repo" then
+          repos[#repos + 1] = p
+        elseif not kind and level < scan_depth() then
+          walk(p, level + 1)
         end
       end
     end
   end
+  walk(dir, 1)
   return repos
 end
 
