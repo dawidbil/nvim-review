@@ -16,8 +16,9 @@ local function worktree_items(list)
     w_repo = math.max(w_repo, #wt.repo)
     w_name = math.max(w_name, #wt.name)
   end
+  local counts = ctx.dirty_counts(list)
   for _, wt in ipairs(list) do
-    local dirty = ctx.dirty_count(wt)
+    local dirty = counts[wt.path] or 0
     items[#items + 1] = {
       text = table.concat({ wt.repo, wt.name, wt.branch or "" }, " "),
       wt = wt,

@@ -266,6 +266,23 @@ function M.dirty_count(wt)
   return #vim.split(vim.trim(out), "\n")
 end
 
+---dirty_count for many worktrees at once: all `git status` runs in parallel.
+---@param list review.Worktree[]
+---@return table<string, integer> dirty counts keyed by worktree path
+function M.dirty_counts(list)
+  local procs = {}
+  for _, wt in ipairs(list) do
+    procs[wt.path] = vim.system({ "git", "-C", wt.path, "status", "--porcelain" }, { text = true })
+  end
+  local counts = {}
+  for path, proc in pairs(procs) do
+    local r = proc:wait()
+    local out = r.code == 0 and vim.trim(r.stdout) or ""
+    counts[path] = out == "" and 0 or #vim.split(out, "\n")
+  end
+  return counts
+end
+
 function M.current_branch(wt)
   local out = M.git(wt.path, { "branch", "--show-current" })
   out = out and vim.trim(out) or ""
