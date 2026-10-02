@@ -24,6 +24,7 @@ nvim-review         # runs with NVIM_APPNAME=nvim-review, coexists with any othe
 
 If no instance is running, `open`/`diff` start a new window (`$NVIM_REVIEW_TERMINAL`, default
 `kitty --class nvim-review`, so a window manager rule can park it) and then run the command.
+Repos are found up to `$NVIM_REVIEW_DEPTH` levels under the root (default 2).
 Root = `$MARCUS_ROOT`, else the nearest ancestor that is a git repo containing other repos.
 Keymaps: `docs/KEYMAPS.md`. Test data: `scripts/make-fixtures.sh` (`docs/FIXTURES.md`).
 
