@@ -353,9 +353,17 @@ end
 -- finish out of order, so only one runs at a time and we re-check the wanted base afterwards.
 -- "HEAD" is passed explicitly: nil would mean the index and hide staged changes.
 local gs_inflight = false
-local function sync_gitsigns()
+local gs_waiters = {} ---@type function[] run once gitsigns is on the wanted base
+local function sync_gitsigns(cb)
+  if cb then gs_waiters[#gs_waiters + 1] = cb end
   local ok, gs = pcall(require, "gitsigns")
-  if not ok or not ctx.active or gs_inflight then return end
+  local function flush()
+    local ws = gs_waiters
+    gs_waiters = {}
+    for _, w in ipairs(ws) do w() end
+  end
+  if not ok or not ctx.active then return flush() end
+  if gs_inflight then return end
   local want = ctx.meta.base_ref or "HEAD"
   gs_inflight = true
   local done = false
@@ -363,7 +371,7 @@ local function sync_gitsigns()
     if done then return end
     done = true
     gs_inflight = false
-    if (ctx.meta.base_ref or "HEAD") ~= want then sync_gitsigns() end
+    if (ctx.meta.base_ref or "HEAD") ~= want then sync_gitsigns() else vim.schedule(flush) end
   end
   local started = pcall(gs.change_base, want, true, finish)
   if not started then finish() else vim.defer_fn(finish, 2000) end -- never stay "in flight" forever
@@ -373,18 +381,21 @@ end
 function M.reopen()
   local file = M.session and M.session.file or (M.last and M.last.file)
   M.close()
-  sync_gitsigns()
-  local wt = ctx.active
-  if not file or not wt or (M.last and M.last.path ~= wt.path) then return end
-  local ref, label = refresh(wt)
-  for _, f in ipairs(M.files) do
-    if f.file == file then return M.open(wt, ref, f) end
-  end
-  -- Not changed under this base: keep showing the file (plain) and remember it, so the next
-  -- toggle brings its diff back.
-  local abs = wt.path .. "/" .. file
-  if vim.uv.fs_stat(abs) then vim.cmd.edit(vim.fn.fnameescape(abs)) end
-  vim.notify(("No changes in %s vs %s (toggle again to see its diff)"):format(file, label), vim.log.levels.INFO, { title = "review" })
+  -- Open only after gitsigns finished re-basing: change_base() detaches/re-attaches buffers,
+  -- and editing the file meanwhile leaves it detached (no inline hunks).
+  sync_gitsigns(function()
+    local wt = ctx.active
+    if not file or not wt or (M.last and M.last.path ~= wt.path) then return end
+    local ref, label = refresh(wt)
+    for _, f in ipairs(M.files) do
+      if f.file == file then return M.open(wt, ref, f) end
+    end
+    -- Not changed under this base: keep showing the file (plain) and remember it, so the next
+    -- toggle brings its diff back.
+    local abs = wt.path .. "/" .. file
+    if vim.uv.fs_stat(abs) then vim.cmd.edit(vim.fn.fnameescape(abs)) end
+    vim.notify(("No changes in %s vs %s (toggle again to see its diff)"):format(file, label), vim.log.levels.INFO, { title = "review" })
+  end)
 end
 
 function M.setup()
@@ -394,6 +405,18 @@ function M.setup()
       M.close()
       M.last = nil
       sync_gitsigns()
+    end,
+  })
+  -- Terminal resized (e.g. i3 tiling change): re-center the cursor line in the split diff.
+  vim.api.nvim_create_autocmd("VimResized", {
+    callback = function()
+      local s = M.session
+      if not s or s.inline or not vim.api.nvim_win_is_valid(s.rwin) then return end
+      vim.schedule(function()
+        if not vim.api.nvim_win_is_valid(s.rwin) then return end
+        vim.cmd("wincmd =")
+        vim.api.nvim_win_call(s.rwin, function() vim.cmd("normal! zz") end)
+      end)
     end,
   })
   vim.api.nvim_create_autocmd("User", {
